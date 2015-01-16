@@ -51,8 +51,12 @@ def build_file_list():
         folders.sort()
         files.sort()
         for filename in files:
-            if re.search(".(aac|mp3|wav|flac|m4a|ogg|pls|m3u)$",
-                         filename) is not None:
+            if re.search(".(pls|m3u)$", filename) is not None:
+                playlist = parse_playlist(filename, root)
+                for i in playlist:
+                    file_list.append(i)
+            elif re.search(".(aac|mp3|wav|flac|m4a|ogg)$",
+                           filename) is not None:
                 file_list.append(os.path.join(root, filename))
     return file_list
 
@@ -69,32 +73,11 @@ def play_songs(file_list):
         for filename in file_list:
             print("Playing {0}".format(filename))
             global ffmpeg
-            if re.search(".pls$", filename) is not None:
-                streamurl = parse_pls(filename, 1)
-                if streamurl is not None:
-                    print("streaming radio from " + streamurl)
-                    ffmpeg = subprocess.Popen(["ffmpeg", "-i", streamurl, "-f",
-                                               "s16le", "-acodec", "pcm_s16le",
-                                               "-ar", "44100", "-ac",
-                                               "2" if play_stereo else "1",
-                                               "-"], stdout=music_pipe_w,
-                                              stderr=dev_null)
-            elif re.search(".m3u$", filename) is not None:
-                streamurl = parse_m3u(filename, 1)
-                if streamurl is not None:
-                    print("streaming radio from " + streamurl)
-                    ffmpeg = subprocess.Popen(["ffmpeg", "-i", streamurl, "-f",
-                                               "s16le", "-acodec", "pcm_s16le",
-                                               "-ar", "44100", "-ac",
-                                               "2" if play_stereo else "1",
-                                               "-"], stdout=music_pipe_w,
-                                              stderr=dev_null)
-            else:
-                ffmpeg = subprocess.Popen(["ffmpeg", "-i", filename, "-f",
-                                           "s16le", "-acodec", "pcm_s16le",
-                                           "-ac", "2" if play_stereo else "1",
-                                           "-ar", "44100", "-"],
-                                          stdout=music_pipe_w, stderr=dev_null)
+            ffmpeg = subprocess.Popen(["ffmpeg", "-i", filename, "-f",
+                                       "s16le", "-acodec", "pcm_s16le",
+                                       "-ac", "2" if play_stereo else "1",
+                                       "-ar", "44100", "-"],
+                                      stdout=music_pipe_w, stderr=dev_null)
             ffmpeg.wait()
 
 
@@ -134,44 +117,31 @@ def read_config():
             pass
 
 
-def parse_pls(src, titleindex):
-    # breaking up the pls file in separate strings
-    lines = []
-    with open(src, "r") as f:
-        lines = f.readlines()
+def parse_playlist(playlist_path, root):
+    playlist = []
+    playlist_file_open = open(os.path.join(root, playlist_path))
+    playlist_file = playlist_file_open.read().split("\n")
+    playlist_file_open.close()
 
-    # and parse the lines
-    if lines is not None:
-        for line in lines:
-            # search for the URI
-            match = re.match("^[ \\t]*file" + str(titleindex) +
-                             "[ \\t]*=[ \\t]*(.*$)", line, flags=re.IGNORECASE)
-            if match is not None:
-                if match.group(1) is not None:
-                    # URI found, it's saved in the second match group
-                    # output the URI to the destination file
-                    return match.group(1)
+    if re.search(".m3u$", playlist_path) is not None:
+        for line in playlist_file:
+            line = line.strip("\r")
+            song = os.path.join(root, line)
+            if not re.match("^#", line) and os.path.isfile(song):
+                playlist.append(os.path.join(root, song))
+            elif not re.match("^#", line) and re.search("://", line):
+                playlist.append(line)
 
-    return None
+    elif re.search(".pls$", playlist_path) is not None:
+        for line in playlist_file:
+            if re.match("^File[0-9]+=", line):
+                song = re.split("^File[0-9]+=", line)[1].strip("\r")
+                if os.path.isfile(os.path.join(root, song)):
+                    playlist.append(os.path.join(root, song))
+                elif re.search("://", song):
+                    playlist.append(song)
 
-
-def parse_m3u(src, titleindex):
-    # create a list of strings, one per line in the source file
-    lines = []
-    searchindex = int(1)
-    with open(src, "r") as f:
-        lines = f.readlines()
-
-    if lines is not None:
-        for line in lines:
-            # search for the URI
-            if '://' in line:
-                if searchindex == titleindex:
-                    return line
-                else:
-                    searchindex += 1
-
-    return None
+    return playlist
 
 
 def daemonize():
